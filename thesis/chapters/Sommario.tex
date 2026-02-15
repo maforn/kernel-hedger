@@ -1,0 +1,6 @@
+\thispagestyle{plain}
+\setcounter{page}{4}
+
+La latenza di coda compromette le prestazioni dei moderni microservizi. Le tecniche di mitigazione tradizionali, come l'hedging delle richieste delle applicazioni, soffrono di instabilità (jitter) dovuta alla pianificazione del sistema operativo e alla garbage collection.
+Questa tesi propone un'implementazione trasparente dell'hedging delle richieste basata su eBPF, che sposta la logica di controllo dallo spazio utente al kernel Linux. Il sistema intercetta il traffico UDP e gestisce le ritrasmissioni senza richiedere modifiche al codice sorgente.
+I test condotti in un ambiente caotico deterministico dimostrano una riduzione del P99 da 400 ms a 13 ms. Rispetto alle soluzioni applicative, l'approccio del kernel elimina le fluttuazioni temporali, garantendo una stabilità di esecuzione superiore con un overhead trascurabile.

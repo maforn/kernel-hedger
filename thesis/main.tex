@@ -1,0 +1,153 @@
+\documentclass[12pt, twoside]{report}
+
+\usepackage{header}
+%\newenvironment{abstract}{}{}
+%\usepackage{abstract}
+\makeatletter
+\let\orig@cleardoublepage\cleardoublepage
+\renewcommand{\cleardoublepage}{%
+  \clearpage
+  \if@twoside
+    \ifodd\c@page
+      % Do nothing, we're already on a right-hand page
+    \else
+      % We're on a left-hand page → insert a blank page with no headers/rules
+      \thispagestyle{empty}%
+      \hbox{}%
+      \newpage
+    \fi
+  \fi
+}
+\makeatother
+
+\begin{document}
+
+\newgeometry{
+    left=20mm,
+    right=20mm,
+    top=13mm,
+    bottom=15mm
+}
+
+\begin{titlepage}
+
+\begin{center}
+
+% marchio di ateneo
+\includegraphics[width=6.5cm,height=4.7cm]{images/logo_bw.png}
+
+\vspace{10mm}
+
+% \Large is 14.4pt
+{\Large{\bf{Scuola di Scienze}}} 
+
+\vspace{5mm}
+
+% \Large is 14.4pt
+{\Large{\bf{Corso di Laurea in Informatica}}}
+
+\vspace{40mm}
+
+{\huge{\bf Kernel-level Hedged Requests}}\\
+\vspace{5mm}
+{\huge{\bf via eBPF}}
+\vspace{5mm}
+
+\end{center}
+
+\vspace{35mm}
+
+\begin{minipage}[t]{0.40\textwidth}
+{
+\Large{\bf Relatore}\\[2pt]
+\Large{\bf Prof. Dott.}\\[2pt]
+\Large{\bf Paolo Tortora}}
+
+\vspace{10mm}
+
+
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.40\textwidth}\raggedleft
+{\Large{\bf Presentata da}\\[2pt]
+\Large{\bf{Matteo Fornaini}}}
+\end{minipage}
+
+\vspace{30mm}
+
+\centerline{\rule[0.8cm]{17.2cm}{0.6mm}}
+
+\begin{center}
+%{\large{\bf I Sessione\\}}
+{\large{\bf Anno Accademico 2024/2025\\}}
+\end{center}
+
+\end{titlepage}
+
+\restoregeometry
+\pagenumbering{roman}
+
+\newpage
+\thispagestyle{empty}
+\mbox{}
+\newpage
+
+\phantomsection
+\begin{abstract}
+    \addcontentsline{toc}{chapter}{Abstract}
+    \input{chapters/Abstract}
+\end{abstract}
+
+\newpage
+\thispagestyle{empty}
+\mbox{}
+\newpage
+\phantomsection
+
+\renewcommand{\abstractname}{Sommario}
+\begin{abstract}
+    \addcontentsline{toc}{chapter}{Sommario}
+    \input{chapters/Sommario}
+\end{abstract}
+\renewcommand{\abstractname}{Abstract}
+
+\phantomsection
+\newpage
+\thispagestyle{empty}
+\mbox{}
+\newpage
+\phantomsection
+\addcontentsline{toc}{chapter}{Contents}
+\pagenumbering{roman}
+\setcounter{page}{6}
+\tableofcontents
+\clearpage 
+\pagenumbering{arabic}
+
+% Introduction : Motivation, context, scope, contribution and Thesis 
+\subfile{chapters/0_Introduction}
+% Necessary Prerequisites 
+\cleardoublepage
+\subfile{chapters/1_Background}
+% Methodology
+\cleardoublepage
+\subfile{chapters/2_Architecture}
+% Experiment
+\cleardoublepage
+\subfile{chapters/3_Experiment}
+% Conclusions
+\cleardoublepage
+\subfile{chapters/4_Conclusions}
+
+\cleardoublepage
+\appendix
+\chapter{Pseudocode of the Components}
+\input{chapters/AppendixA}
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{References}
+\clearpage
+\printbibliography[title={References}]
+
+\end{document}

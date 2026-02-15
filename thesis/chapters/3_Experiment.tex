@@ -1,0 +1,191 @@
+\documentclass[../main.tex]{subfiles}
+\begin{document}
+
+\chapter{Experiment Setup}
+\label{chap:setup}
+
+To evaluate the effectiveness and performance of the proposed hedging system, it was necessary to design a rigorous test environment. Evaluating network algorithms on real physical networks (such as the Internet or a corporate LAN) introduces uncontrollable variables (congestion, dynamic routing) that make fair comparison difficult.
+Therefore, we developed a test framework based on the principle of \textit{Deterministic Chaos}: a controlled environment in which failures and latencies are introduced programmatically, ensuring that each algorithm under test (Baseline, App-Hedged, Kernel-Hedged) faces exactly the same load and error scenario.
+
+\section{Testbed Architecture}
+The experimental environment consists of a Client-Server architecture implemented in Python, running on a single Linux machine to eliminate physical network noise. Isolation between tests is ensured by using separate UDP ports for each scenario.
+
+\subsection{Hardware and Software Specifications}
+All experiments were conducted on the following configuration:
+\begin{itemize}
+\item \textbf{CPU:} Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz
+\item \textbf{RAM:} 16 GB DDR4
+\item \textbf{OS:} Ubuntu Linux 22.04 LTS
+\item \textbf{Python:} Version 3.10
+\item \textbf{Libraries:} \texttt{bcc} (BPF Compiler Collection) for eBPF orchestration, \texttt{matplotlib} for data visualization.
+\end{itemize}
+
+\section{The “Deterministic Chaos” Server}
+The central component of the testbed is a custom UDP server designed to emulate an unstable microservice. Unlike standard chaos engineering tools (such as Chaos Mesh or Poxy) that introduce latency probabilistically (e.g., \texttt{random.random() < 0.02}), our server uses a deterministic approach based on the request ID.
+
+\subsection{Fault Injection Logic}
+The server inspects the payload of each incoming UDP packet to extract a 32-bit sequential identifier (\texttt{req\_id}). The decision to introduce latency is calculated as follows:
+
+\begin{lstlisting}[language=Python, caption=Deterministic Fault Injection Logic]
+def process_request(req_id):
+# Deterministic Logic:
+# IDs ending in 00 or 01 (2% of the total) are “Bad Packets”
+is_bad = (req_id % 100) < 2
+```
+if is_bad:
+    # Simulation of a stall (Garbage Collection, I/O wait)
+    time.sleep(0.400) # 400ms latency
+else:
+    # Fast Path
+    time.sleep(0.002) # 2ms latency
+
+send_response(req_id)
+```
+\end{lstlisting}
+
+This logic mathematically guarantees that:
+\begin{enumerate}
+\item Exactly \textbf{2\%} of requests will experience a stall (Tail Latency).
+\item The stall is exactly 400ms (simulating a network timeout or severe application blockage).
+\item \textbf{All} tested clients will encounter the exact same “slow” packets.
+\end{enumerate}
+
+\subsection{Memory Management and Anti-Replay}
+To realistically simulate a balanced infrastructure, the server maintains a short-term memory (TTL = 1 second) of received requests.
+If the server receives an ID that it has seen recently (a duplicate or “Hedge” request), it ignores the failure logic and responds immediately. This simulates the real-world scenario where the rescue request is routed to a healthy or unloaded service instance, bypassing the problem that plagued the first request.
+
+\section{Client Components}
+Three distinct benchmark clients were developed to compare the different strategies. Each client sends 5000 sequential requests.
+
+\subsection{1. Baseline Client (Control)}
+This client represents the standard “naive” implementation. It uses a blocking UDP socket with a conservative timeout.
+\begin{itemize}
+\item \textbf{Logic:} Send request. Wait for response.
+\item \textbf{Timeout:} 1.0 seconds.
+\item \textbf{Objective:} Establish the baseline network performance without any mitigation.
+\end{itemize}
+
+\subsection{2. Client App-Hedged (User Space)}
+This client implements the “Request Hedging” pattern entirely in Python, representing the current state of the art in application libraries (such as gRPC or Finagle).
+\begin{itemize}
+\item \textbf{Technology:} Uses non-blocking primitives (\texttt{select} or \texttt{poll}) to handle asynchronous I/O.
+\item \textbf{Logic:}
+\begin {enumerate}
+\item Send request. Set timer.
+\item If  expires without response, send copy  (Hedge).
+\item Wait for the first valid response between  and .
+\end{enumerate}
+\item \textbf{Criticality:} Timer management takes place in user space and is subject to operating system scheduling and Python Garbage Collection.
+\end{itemize}
+
+\subsection{3. Kernel-Hedged Client (eBPF)}
+This client is identical to the \textit{Baseline} client code. It does not contain any retry logic or multiple timers.
+The hedging logic is provided externally and transparently by the eBPF program loaded into the kernel.
+\begin{itemize}
+\item \textbf{Transparency:} From the Python code perspective, the client is simply sending a packet and receiving a response.
+\item \textbf{eBPF subsystem:}
+\begin{itemize}
+\item \textbf{Egress Hook (Splitter):} Intercepts the outgoing packet on \texttt{lo}.
+\item \textbf{Delay Line:} Interfaces \texttt{veth} with \texttt{netem} for a 10ms delay.
+\item \textbf{Ingress Hook (Rescuer):} Injects the rescue packet if the original was not found.
+\end{itemize}
+\end{itemize}
+
+\section{Experiment Parameters}
+Table \ref{tab:params} summarizes the parameters configured for the final test campaign.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} \\ \hline
+Total Number of Requests & 5000 \\ \hline
+Warmup Requests & 200 (discarded from results) \\ \hline
+Failure Probability & 2.0\% (1 in 50) \\ \hline
+Failure Duration (Stall) & 400 ms \\ \hline
+Normal Latency (RTT) & 2--3 ms \\ \hline
+Hedging Threshold & 10 ms \\ \hline
+Maximum Timeout & 1.0 s \\ \hline
+\end{tabular}
+\caption{Benchmark Operating Parameters}
+\label{tab:params}
+\end{table}
+
+\clearpage
+\section{Results and Discussion}
+
+This section presents and analyzes the results obtained from the experimental campaign described in the previous section. The goal is to quantify the effectiveness of the eBPF-based \textit{Transparent Request Hedging} system and compare it directly with traditional user space implementations.
+
+\section{Latency Distribution Analysis}
+
+The tests were performed on a sample of requests for each of the three scenarios (Baseline, App-Hedged, Kernel-Hedged). The raw data was aggregated to calculate key percentiles (P50, P95, P99) and the absolute maximum latency.
+
+Table \ref{tab:final_results} summarizes the observed performance metrics.
+
+\begin{table}[h]
+\centering
+\resizebox{\textwidth}{!} {%
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Method} & \textbf{P50 (ms)} & \textbf{P95 (ms)} & \textbf{P99 (ms)} & \textbf{MAX (ms)} & \textbf{P99 Reduction} \\ \hline
+Baseline & 2.64 & 3.17 & 401.14 & 401.60 & - \\ \hline
+App-Hedged & 2.65 & 3.02 & 13.08 & \textbf{22.09} & 96.7\% \\ \hline
+Kernel-Hedged & 2.66 & 3.04 & 12.83 & \textbf{13.35} & 96.8\% \\ \hline
+\end{tabular}%
+}
+\caption{Latency Comparison (Fault Injection: 2\%, Stall: 400ms)}
+\label{tab:final_results}
+\end{table}
+
+\subsection{Effectiveness of Hedging on the Tail (P99)}
+The first obvious result is the effectiveness of the hedging strategy, regardless of its implementation.
+\begin{itemize}
+\item The \textbf{Baseline} shows a P99 of 401.14ms. This confirms that, without mitigation mechanisms, 2\% of requests (those subject to failure) dominate the queue statistics, unacceptably degrading the Quality of Service (QoS).
+\item Both \textbf{Hedged} methods reduce the P99 to approximately 13ms. This value is consistent with the theoretical model:
+\begin {equation}
+Lat_{Hedged} \approx T_{timer} + RTT_{server} = 10ms + \sim3ms = 13ms
+\end{equation}
+\end{itemize}
+This result validates the proposed architecture: the eBPF system is able to detect the stall and inject the rescue packet with the same effectiveness as complex application logic.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{thesis_full.png}
+\caption{CDF of Latency (Logarithmic Scale). Note the sharp cut-off of the tail achieved by the Hedged methods compared to the Baseline.}
+\label{fig:cdf_full}
+\end{figure}
+
+\section{Jitter Analysis: User Space vs. Kernel}
+
+The most significant scientific contribution of this thesis emerges when comparing the temporal stability of the two hedging approaches. Although the P99 values are similar, the maximum latency (MAX) reveals a fundamental divergence caused by the execution environment.
+
+\subsection{User Space Instability (App-Hedged)}
+The application client (Python) recorded a maximum peak of **22.09ms**. Considering that the timeout was set to 10ms and the network takes 3ms, there is approximately **9ms of unexplained delay**.
+Runtime analysis suggests that this \textit{Jitter} is caused by two factors intrinsic to the user space:
+\begin{enumerate}
+\item \textbf{Garbage Collection (GC):} During benchmark execution, the Python runtime periodically paused execution to reclaim memory. If the GC pause occurs while the 10ms timer is about to expire, the rescue packet is delayed until the GC finishes.
+\item \textbf{Process Scheduling:} The Linux kernel (via CFS) may have preempted the Python process to serve other system tasks, delaying the wake-up of the thread responsible for hedging.
+\end{enumerate}
+
+\subsection{Kernel Stability (Kernel-Hedged)}
+The eBPF system recorded a maximum of **13.35ms**, with a negligible deviation from the expected value.
+eBPF programs connected to the Traffic Control (TC) hook are executed in the \textbf{SoftIRQ} (Software Interrupt) context. This context has a much higher execution priority than user processes and is not subject to CFS scheduler logic or Garbage Collection pauses.
+The result is a deterministic system: when the packet exits the virtual delay line (after exactly 10ms), the eBPF code is executed immediately.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{thesis_zoomed.png}
+\caption{Detail of the queue (Zoom P99). The Kernel line (Green) is steeper and more stable, while the App line (Blue) shows a “tail of the queue” due to Jitter.}
+\label{fig:cdf_zoomed}
+\end{figure}
+
+\section{Overhead Analysis}
+A common concern with adopting packet interception technologies is the introduction of additional latency in the critical path (Fast Path).
+Comparing the P50 (Median) values:
+\begin{itemize}
+\item \textbf{Baseline:} 2.64ms
+\item \textbf{Kernel-Hedged:} 2.66ms
+\end{itemize}
+The overhead introduced by the eBPF module (packet cloning and hash map lookup) is approximately \textbf{0.02ms (20 microseconds)}. This value is negligible for the vast majority of microservice applications, confirming that eBPF is a technology suitable for high-performance production environments.
+
+\end{document}

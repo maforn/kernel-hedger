@@ -1,0 +1,33 @@
+\documentclass[../main.tex]{subfiles}
+\begin{document}
+
+\chapter{Conclusions and Future Developments}
+\label{chap:conclusions}
+
+\section{Summary of the Work}
+This thesis addressed the problem of \textit{Tail Latency} in modern distributed systems, proposing a paradigm shift in the implementation of resilience strategies.
+We have demonstrated that the traditional approach, which delegates the logic of \textit{Request Hedging} to individual applications (User Space), suffers from intrinsic limitations related to maintenance complexity and temporal instability (Jitter).
+
+To overcome these limitations, we designed and implemented a system based on \textbf{eBPF} that moves this logic entirely into the Linux kernel. The system transparently intercepts traffic, manages high-precision retransmission timers, and injects rescue packets without requiring any changes to the microservices' source code.
+
+Experimental results, obtained in a deterministic chaos environment, confirm that the kernel-level solution:
+\begin{enumerate}
+\item \textbf{Matches application effectiveness:} Reduces P99 by 96\% (from 400ms to 13ms).
+\item \textbf{Exceeds application stability:} Eliminates jitter due to Garbage Collection and Scheduling, reducing maximum latency by 40\% compared to an optimized Python client.
+\item \textbf{Introduces negligible overhead:} Impacts median latency by only 20 microseconds.
+\item \textbf{Allows for oblivious clients:} Can operate without the client having knowledge of its operation.
+\end{enumerate}
+
+\section{Current Limitations and Future Developments}
+Although functional and effective, the prototype developed has limitations that open the way for future research:
+
+\subsection{TCP Protocol Support}
+The current implementation only supports the UDP (User Datagram Protocol). Extending the system to TCP is a significant challenge, as it requires connection state management (sequence numbers, congestion windows, retransmissions) to prevent the injection of duplicate packets from desynchronizing the flow or being interpreted as a TCP Injection attack. One possible solution involves integration with the kernel's conntrack module.
+
+\subsection{Adaptive Hedging}
+Currently, the timeout threshold () is fixed (e.g., 10 ms). In a real environment, network latency varies dynamically. A natural evolution of the system involves the use of eBPF maps to calculate real-time latency histograms, allowing the kernel to automatically adapt the hedging threshold (e.g., setting it to the current P95) without human intervention.
+
+\subsection{Integration with Kubernetes}
+To facilitate adoption in Cloud Native environments, the next step is to encapsulate the eBPF program in a CNI (Container Network Interface) plugin or in a Kubernetes DaemonSet, allowing hedging policies to be applied to specific Pods via simple YAML annotations, fully realizing the vision of a “Kernel Service Mesh.”
+
+\end{document}

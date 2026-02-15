@@ -1,0 +1,86 @@
+\documentclass[../main.tex]{subfiles}
+\begin{document}
+
+\chapter{System Architecture}
+\label{chap:architecture}
+
+This chapter describes the high-level design of the Transparent Request Hedger. The system is designed to meet three key requirements: \textbf{Transparency} (no code changes), \textbf{Accuracy} (timers driven by CPU ticks, not scheduler slots), and \textbf{Efficiency} (zero-copy cloning).
+
+\section{Architectural Overview}
+The system functions as a “bump-in-the-wire.” It is transparently positioned between the application and the physical network interface.
+
+The architecture consists of four logical components:
+\begin{enumerate}
+\item \textbf{The Splitter (Egress Filter):} Intercepts outgoing UDP requests.
+\item \textbf{The Virtual Delay Line:} A mechanism for “parking” packets for a predetermined duration.
+\item \textbf{The Rescuer (Ingress Filter):} Decides whether to inject the hedge.
+\item \textbf{The Scoreboard:} A shared BPF map that tracks the status of requests.
+\end{enumerate}
+
+\subsection{Component 1: The Splitter}
+Located on the Egress hook of \texttt{lo} (Loopback), the Splitter inspects every packet leaving the application. Its logic is as follows:
+\begin{itemize}
+\item \textbf{Parsing:} Checks whether the packet is UDP and destined for the target server port.
+\item \textbf{Tracking:} Extracts the Request ID from the payload and creates an entry in the \textit{Scoreboard} map, setting the status to \texttt{PENDING}.
+\item \textbf{Cloning:} Uses the \texttt{bpf\_clone\_redirect()} helper to create an exact duplicate of the packet (the “Shadow Packet”).
+\item \textbf{Routing:} The original packet is allowed to pass through normally. The Shadow Packet is redirected to a special virtual interface, which we call the “Shadow Queue.”
+\end{itemize}
+
+
+\subsection{Component 2: The Virtual Delay Line}
+A major limitation of eBPF is that programs must be non-blocking; they cannot simply call sleep(10ms). To implement hedging delay without pausing the kernel, we use Linux's native networking capabilities.
+We create a pair of Virtual Ethernet (veth) interfaces. On one end, we apply a standard Traffic Control rule using netem (Network Emulator) to introduce a fixed 10ms delay.
+When the Splitter redirects the Shadow Packet to this interface, the Linux kernel essentially “puts it to sleep” in a buffer for exactly 10ms, handling the timing asynchronously. This allows the eBPF program to terminate immediately, keeping system throughput high.
+
+\subsection{Component 3: The Rescuer}
+The Rescuer program is connected to the output of the Virtual Delay Line. When the Shadow Packet emerges 10ms later, the Rescuer activates:
+\begin{enumerate}
+\item Searches for the Request ID in the \textit{Scoreboard}.
+\item \textbf{Case A (Success):} If the original request has already received a response (ACK), the status in the Scoreboard will be \texttt{COMPLETED}. The Rescuer drops the Shadow Packet.
+\item \textbf{Case B (Stalled):} If the status is still \texttt{PENDING}, the Rescuer modifies the Shadow Packet (correcting checksums and MAC addresses) and injects it back into the main network stack, effectively sending the Hedge Request.
+\end{enumerate}
+
+This architecture ensures that the “hedging decision” is made based on the most up-to-date state of the system, exactly 10ms after the initial transmission, with microsecond-level precision provided by the kernel's own packet schedulers.
+
+
+\section{Implementation}
+
+The transition from a theoretical design to a working implementation in the Linux kernel presented several low-level challenges. Unlike development in user space, where operating system abstractions mask hardware complexity, eBPF programming requires explicit management of network details. This chapter documents the critical issues encountered and the solutions adopted.
+
+\section{The Checksum Offloading Problem}
+The most insidious challenge encountered during development was the silent corruption of cloned packets.
+In modern network interface cards (NICs), calculating the checksum (CRC) for IP and UDP protocols is CPU-intensive. To optimize performance, the operating system uses a technique called \textbf{Checksum Offloading}: the kernel delegates the checksum calculation to the NIC hardware at the time of physical transmission.
+
+\subsection{The Clone Error}
+Our eBPF program intercepts the packet in the Traffic Control (TC) hook before it reaches the hardware. At this stage, the checksum field of the UDP header is empty or partial, as the kernel expects the NIC to fill it in later.
+However, when we clone the packet and re-inject it into the network (towards the delay interface or towards the server), the packet's path changes. If the cloned packet is re-injected at a point where the kernel expects a valid checksum, the network stack detects the inconsistency and discards the packet (Packet Drop) without generating explicit errors.
+
+\subsection{The Solution: Disabling and Zero-Checksum}
+We adopted a two-tiered approach to solve the problem:
+\begin{enumerate}
+\item \textbf{Interface Configuration:} We disabled hardware offloading on the loopback interface and virtual interfaces (veth) using the \texttt{ethtool} command:
+\begin{verbatim}
+ethtool -K lo tx off rx off
+\end{verbatim}
+This forces the kernel to calculate the checksum via software before the packet reaches our eBPF hook.
+\item \textbf{eBPF modification:} In the Rescuer code, we force the checksum field to zero before reinjection. In the UDP over IPv4 standard, a zero checksum indicates “no checksum,” instructing the receiver to skip integrity validation.
+\begin{lstlisting}[language=C]
+// eBPF code to zero the UDP checksum
+u16 zero_csum = 0;
+bpf_skb_store_bytes(skb, UDP_OFFSET + 6, &zero_csum, 2, 0);
+\end{lstlisting}
+\end{enumerate}
+
+\section{Martian Packets and Local Routing}
+Another security barrier in the Linux kernel is \textbf{Reverse Path Filtering (rp\_filter)}. This security measure discards packets arriving from an unexpected interface to prevent IP spoofing.
+In our system, “Shadow Packets” have the source address \texttt{127.0.0.1} (localhost) but arrive from the virtual interface veth\_shadow instead of the loopback interface lo. The kernel classifies these packets as “Martian Packets” — packets with addresses that are impossible given the network topology — and discards them.
+
+\subsection{Bypass via Sysctl}
+To allow the hedging system to function in a controlled environment, it was necessary to relax these routing constraints by modifying the kernel runtime parameters:
+\begin{verbatim}
+sysctl -w net.ipv4.conf.all.accept_local=1
+sysctl -w net.ipv4.conf.all.route_localnet=1
+sysctl -w net.ipv4.conf.default.rp_filter=0
+\end{verbatim}
+These changes instruct the kernel to accept packets destined for localhost even if they come from external or virtual interfaces, allowing the Rescuer to successfully reinject rescue requests.
+\end{document}

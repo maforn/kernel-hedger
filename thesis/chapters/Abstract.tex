@@ -1,0 +1,7 @@
+\thispagestyle{plain}
+\setcounter{page}{2}
+
+Tail latency compromises the performance of modern microservices. Traditional mitigation techniques, such as application request hedging, suffer from instability (jitter) due to operating system scheduling and garbage collection.
+This thesis proposes a transparent implementation of request hedging based on eBPF, which moves the control logic from user space to the Linux kernel. The system intercepts UDP traffic and handles retransmissions without requiring source code changes.
+Tests conducted in a deterministic chaos environment demonstrate a reduction in P99 from 400ms to 13ms. Compared to application solutions, the kernel approach eliminates time fluctuations, ensuring superior execution stability with negligible overhead.
+

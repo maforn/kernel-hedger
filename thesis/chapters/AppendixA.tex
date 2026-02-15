@@ -1,0 +1,166 @@
+\label{appendix:A}
+
+This appendix provides the algorithmic description of the three core components developed for this thesis: the Deterministic Chaos Server used for benchmarking, the eBPF programs running in the kernel, and the client-side implementations used to compare the hedging strategies.
+
+A full working implementation can be found on my \href{https://github.com/maforn/kernel-hedger}{github}.
+
+\section{Deterministic Chaos Server}
+The server simulates a microservice with tail latency issues. Crucially, the latency is injected deterministically based on the Request ID, ensuring that both Application and Kernel hedgers face exactly the same "bad" packets. It also implements a replay-memory to allow hedged requests (retries) to succeed immediately.
+
+\begin{algorithm}
+\caption{Deterministic Chaos UDP Server}
+\label{alg:server}
+\begin{algorithmic}[1]
+\State 
+\State 
+
+\Procedure{HandleRequest}{}
+\State 
+\State 
+
+```
+\Comment{Clean up old history}
+\State $\text{History.RemoveIf}(\lambda t: \text{now} - t > \text{TTL})$
+
+\State $\text{delay} \gets 0.002$ \Comment{Default Fast Path: 2ms}
+
+\If{$(\text{id} \pmod{100}) < 2$} \Comment{2\% Fault Injection Rate}
+    \If{$\text{id} \in \text{History}$}
+        \State \Comment{Hedge detected! This ID was seen recently.}
+        \State \Comment{Skip stall to simulate successful retry on healthy node.}
+        \State $\text{delay} \gets 0.002$
+    \Else
+        \State \Comment{First attempt: Inject Tail Latency}
+        \State $\text{delay} \gets 0.400$ \Comment{Stall: 400ms}
+        \State $\text{History.Insert}(\text{id}, \text{now})$
+    \EndIf
+\EndIf
+
+\State $\text{Sleep}(\text{delay})$
+\State $\text{SendResponse}(\text{packet})$
+
+```
+
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\newpage
+
+\section{eBPF Programs (Kernel Space)}
+The core logic is split into two programs attached to the Traffic Control (TC) hook. The \emph{Splitter} (Egress) clones packets, and the \emph{Rescuer} (Ingress) re-injects them after the delay if necessary.
+
+\begin{algorithm}
+\caption{eBPF Splitter (TC Egress Hook)}
+\label{alg:ebpf_splitter}
+\begin{algorithmic}[1]
+\State 
+
+\Function{HandleEgress}{}
+\If{ \textbf{or} }
+\State \Return 
+\EndIf
+
+```
+\State $\text{id} \gets \text{LoadBytes}(\text{skb}, \text{PayloadOffset}, 4)$
+\State $\text{Scoreboard.Update}(\text{id}, \text{PENDING})$
+
+\Comment{Clone packet and redirect to Delay Line (veth)}
+\State $\text{bpf\_clone\_redirect}(\text{skb}, \text{IFINDEX\_VETH}, 0)$
+
+\State \Return $\text{TC\_ACT\_OK}$ \Comment{Let original packet pass}
+
+```
+
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{eBPF Rescuer (TC Ingress Hook)}
+\label{alg:ebpf_rescuer}
+\begin{algorithmic}[1]
+\Function{HandleIngressFromDelayLine}{}
+\State 
+\State 
+
+```
+\If{$\text{status} == \text{COMPLETED}$}
+    \State \Return $\text{TC\_ACT\_SHOT}$ \Comment{Response received, drop hedge}
+\EndIf
+
+\Comment{Original request is still pending. Rescue it!}
+\State $\text{EthHeader.Src} \gets \text{LocalMac}$
+\State $\text{EthHeader.Dst} \gets \text{GatewayMac}$
+
+\Comment{Disable Checksum to prevent HW Offload drop}
+\State $\text{UDP.Checksum} \gets 0$ 
+
+\State $\text{bpf\_redirect}(\text{IFINDEX\_PHYSICAL}, 0)$
+\State \Return $\text{TC\_ACT\_REDIRECT}$
+
+```
+
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\newpage
+
+\section{Client Implementations}
+This section contrasts the complexity of the Application-level hedging (User Space) versus the simplicity of the Kernel-level approach.
+
+\begin{algorithm}
+\caption{Client: Application-Hedged (Python/User Space)}
+\label{alg:client_app}
+\begin{algorithmic}[1]
+\Procedure{SendRequestApp}{}
+\State 
+\State 
+
+```
+\Comment{User Space Timer Logic}
+\State $\text{ready} \gets \text{select.select}([\text{sock}], [], [], 0.010)$ \Comment{Wait 10ms}
+
+\If{$\text{ready}$}
+    \State \Return $\text{sock.recv}()$ \Comment{Fast path success}
+\Else
+    \State \Comment{Timeout! GC or Scheduler might have delayed this point.}
+    \State $\text{sock.send}(\text{packet}(\text{id}))$ \Comment{Send Hedge}
+    
+    \State $\text{ready} \gets \text{select.select}([\text{sock}], [], [], 1.0)$
+    \If{$\text{ready}$}
+        \State \Return $\text{sock.recv}()$
+    \Else
+        \State \textbf{raise} $\text{TimeoutError}$
+    \EndIf
+\EndIf
+
+```
+
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{Client: Kernel-Hedged (eBPF Transparent)}
+\label{alg:client_kernel}
+\begin{algorithmic}[1]
+\Procedure{SendRequestKernel}{}
+\State 
+
+```
+\Comment{No hedging logic here. The kernel handles it.}
+\State $\text{sock.send}(\text{packet}(\text{id}))$
+
+\Try
+    \State \Return $\text{sock.recv}()$
+\Catch{$\text{TimeoutError}$}
+    \State \textbf{raise} $\text{TimeoutError}$
+\EndTry
+
+```
+
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}

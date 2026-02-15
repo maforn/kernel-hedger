@@ -1,0 +1,50 @@
+\documentclass[../main.tex]{subfiles}
+\begin{document}
+
+\chapter{Background and State of the Art}
+\label{chap:background}
+
+Before detailing the proposed kernel-based solution, it is necessary to analyze the environment in which microservices operate: the Linux operating system. This chapter explores the overhead inherent in standard networking, the eBPF architecture, and the limitations of current industry solutions such as Service Meshes.
+
+\section{The Linux Network Stack}
+In a traditional Linux environment, network packet processing is a multi-stage operation involving significant interaction between hardware, kernel, and user space.
+
+\subsection{User Space vs. Kernel Space}
+The memory of a modern operating system is segregated into two distinct areas:
+\begin{itemize}
+\item \textbf{Kernel Space:} Reserved for the operating system kernel, device drivers, and privileged extensions. It has unlimited access to hardware and memory.
+\item \textbf{User Space:} Where standard applications (such as our Python or Java microservices) reside. They have limited access and must rely on System Calls (syscalls) to perform I/O operations.
+\end{itemize}
+
+When a microservice sends a request, it cannot simply write to the network card. It must trigger a \textbf{Context Switch}. The CPU must save the state of the user process, change privilege levels, and jump into the kernel code to execute the \texttt{sendto()} syscall. The data payload is typically copied from user memory to kernel memory (Socket Buffer or \texttt{sk\_buff}). This boundary crossing is computationally expensive. In high-frequency or hyperscale trading environments, the accumulated cost of these context switches contributes significantly to the “Tax” of microservices.
+
+\subsection{The Cost of Scheduling}
+Furthermore, user space applications are at the mercy of the \textbf{CFS (Completely Fair Scheduler)}. If a machine is under heavy load, the scheduler may preempt the microservice process to allow a background task (such as log rotation or metric scraping) to run. If this preemption occurs just when a hedge request needs to be sent, the “10ms timer” may actually fire at 15ms or 20ms. This phenomenon, known as \textbf{Scheduler Jitter}, is the primary driver of the instability observed in application-level hedging.
+
+\section{eBPF: Programmability in the Kernel}
+The Extended Berkeley Packet Filter (eBPF) represents a paradigm shift in how we interact with the operating system. It allows developers to execute custom logic within the kernel without modifying the kernel source code or loading risky kernel modules.
+
+\subsection{Architecture and Security}
+Unlike traditional Kernel Modules (LKM), which can crash the entire system if they contain a bug (e.g., dereferencing a null pointer), eBPF programs are safe by design. Before a program is loaded, it must pass through the \textbf{eBPF Verifier}, which performs a static analysis to ensure:
+\begin{itemize}
+\item That the program terminates (no infinite loops).
+\item That memory accesses are within bounds (bounds checking).
+\item Only safe kernel functions (Helpers) are called.
+\end{itemize}
+Once verified, the bytecode is Just-In-Time (JIT) compiled into native machine instructions, offering execution speeds comparable to native kernel code. \cite{SentinelOne2023eBPF}
+
+\subsection{The Traffic Control (TC) Hook}
+For this thesis, we use the Traffic Control (TC) hook. While other hooks such as XDP (eXpress Data Path) are faster, they operate too early in the packet lifecycle (before the SKB is fully formed) and are primarily ingress-only.
+TC operates at the Quality of Service (QoS) layer, allowing us to:
+\begin{enumerate}
+\item Inspect packets in both directions: Egress (outgoing) and Ingress (incoming).
+\item Access the complete packet metadata (Protocol, Ports, Flags).
+\item Perform complex actions such as \textbf{Cloning} and \textbf{Redirection}, which are essential for creating our “Shadow Requests.”
+\end{enumerate}
+
+\section{Comparison with Service Meshes}
+The current industry standard for microservice traffic management is the \textbf{Service Mesh} (e.g., Istio, Linkerd). These systems deploy a “Sidecar Proxy” (usually Envoy) alongside each application container.
+Although effective, sidecars operate in User Space. This leads to the “Sidecar Tax”: each packet must cross the kernel-user boundary twice (Application  Kernel  Sidecar  Kernel  Network).
+Our proposed eBPF solution acts as a “Kernel-Native Sidecar,” eliminating these redundant copies and context switches, effectively pushing the logic to the level where the packets actually reside.
+
+\end{document}

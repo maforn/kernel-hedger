@@ -1,0 +1,70 @@
+% Text format
+\usepackage{comment}
+\usepackage[mathlines]{lineno} % uncomment next command for numbered lines
+%\linenumbers % DEBUG: line numbers
+
+% language setup
+\usepackage[english]{babel}
+
+% multifile
+\usepackage{subfiles}
+
+% graphic layout & pictures & tables
+\usepackage[margin= 2.5cm, bindingoffset=-2mm]{geometry}
+\usepackage{graphicx}
+\usepackage{placeins} % picture position fine tuning
+% \usepackage{caption}
+\usepackage{subcaption}
+\graphicspath{ {images/} }
+\usepackage[dvipsnames]{xcolor}
+\usepackage{booktabs}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+% tikz
+\usepackage{tikz} % grafici
+% \usepackage{pgfplots}
+
+% maths and physics
+\usepackage{mathtools} % makes amsmath superfluous
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{bbold}
+\usepackage{bm} % bold in equations
+\usepackage{siunitx}
+\AtBeginDocument{\RenewCommandCopy\qty\SI}
+\usepackage[version=4]{mhchem} % chemical formulas
+% \usepackage{physics}
+\usepackage{listings}
+
+
+% headers
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\setlength\headheight{15pt}
+\fancyhead{}
+\fancyhead[LE]{\selectfont\itshape\nouppercase{\leftmark}}
+\fancyhead[RO]{\selectfont\itshape\nouppercase{\rightmark}}
+
+\usepackage{afterpage}
+\newcommand\emptypage{
+ \null
+ \thispagestyle{empty}
+ \addtocounter{page}{-1}
+ \newpage
+}
+\setcounter{secnumdepth}{5}
+\setcounter{tocdepth}{3}
+
+% bibliography and hyperrefs
+\usepackage[sorting=none, giveninits=true]{biblatex}
+\usepackage{csquotes}
+\addbibresource{bib.bib}
+% \usepackage{bookmark}
+\usepackage[bookmarks=true]{hyperref}
+\usepackage{hyperref}
+
+\usepackage{subfig}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}

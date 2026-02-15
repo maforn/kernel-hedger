@@ -5,7 +5,7 @@
 ![Language](https://img.shields.io/badge/language-C%20%7C%20Python-blue)
 
 ## Abstract
-This repository contains the source code and benchmarking suite for my Collegio Superiore's Short Thesis: **"Kernel-level Hedged Requests via eBPF"**
+This repository contains the source code and benchmarking suite for my Collegio Superiore's [Short Thesis](thesis/Thesis.pdf): **"Kernel-level Hedged Requests via eBPF"**
 
 This project demonstrates how moving reliability logic (Request Hedging) from User Space (Application) to Kernel Space (eBPF) eliminates **User Space Jitter** (caused by Garbage Collection and Process Scheduling), resulting in a 96% reduction in P99 latency.
 
@@ -36,8 +36,13 @@ This project demonstrates how moving reliability logic (Request Hedging) from Us
 * Linux Kernel 5.x+ (Headers installed)
 * `bcc` (BPF Compiler Collection)
 * `ethtool` (To disable checksum offloading)
+* `matplotlib`
 
 ### Running the Experiment
+0.  **Install matplotlib:**
+    ```bash
+    pip install matplotlib
+    ```
 1.  **Start the Deterministic Server:**
     ```bash
     python3 server_dual.py
@@ -54,7 +59,8 @@ This project demonstrates how moving reliability logic (Request Hedging) from Us
 ## Repository Structure
 * `/src`: C (eBPF) and Python source code.
 * `/thesis`: LaTeX source code for the Master's Thesis document.
+* `/plots`: Plots produced by the benchmarking code.
 
 ## Citation
 If you use this code, please cite:
-> Matteo Fornaini, "Kernel-level Hedged Requests via eBPF", Final's Thesis, Collegio Superiore dell'Università di Bologna, 2026.
+> Matteo Fornaini, "Kernel-level Hedged Requests via eBPF", Final Thesis, Collegio Superiore of the University of Bologna, 2026.

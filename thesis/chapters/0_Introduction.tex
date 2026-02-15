@@ -1,0 +1,92 @@
+\documentclass[../main.tex]{subfiles}
+\begin{document}
+
+\chapter{Introduction}
+\label{chap:intro}
+
+\section{Context: Evolution towards Distributed Systems}
+
+In the last two decades, software and computer structures have evolved and greatly changed their own shape, gradually abandoning monolithic architectures in favor of large-scale distributed systems, commonly known as microservice architectures. Scaling up a single service by buying more memory and a faster CPU or RAM is far more expensive (exponential growth) compared to scaling out, that is buying multiple "cheap" commodity hardware that can process the given task in parallel. Instead of having a single faster component, the majority of tasks are now approached by being broken down and parallelized on cheap hardware. Companies such as Amazon, Google, and Netflix have pioneered this approach, breaking down giant applications into hundreds, if not thousands, of independent services that communicate across the network. \cite{bigdatafourney}
+
+In monolithic architecture, a user request (e.g., loading an e-commerce homepage) is processed through in-memory function calls within a single process. Latency is primarily determined by algorithm efficiency and local CPU and I/O speed. In contrast, in a microservices architecture, the same user request triggers a cascade of remote procedure calls (RPCs). A single click can generate a dependency graph (fan-out) involving dozens of distinct services: authentication, recommendations, inventory, pricing, and so on.
+
+Although this model offers great advantages in terms of independence and horizontal scalability, it introduces an inherent complexity related to the network and the individual instability of its single participants. The network, by definition, is unreliable. The latency of a network call is not deterministic, but stochastic, influenced by congestion, queuing in routers, and, as we will see in detail in this thesis, by the internal dynamics of the operating systems that host the services. Every single participant may additionally encounter individual problems during the execution, such as crashing having scheduled function calls that delay the given task and so on. In this context, system performance is no longer defined by the average behavior of its components, but by anomalies: the tails of latency distributions, known as \textif{Tail Latency}.
+
+\section{The Tail Latency}
+
+Tail latency refers to response times at the upper end of the probability distribution, typically the 99th percentile (P99) or the 99.9th percentile (P99.9). While the average latency (P50) of a service may be excellent (a few milliseconds), the P99 can be orders of magnitude higher due to often unpredictable events that may happen to single machines.
+
+Jeffrey Dean and Luiz André Barroso, in their seminal article “The Tail at Scale” \cite{tail}, mathematically formalized why this phenomenon is critical in systems with high fan-out. Consider a user service that must wait for responses from $N$ servers in parallel to complete a request. If each individual server has a probability $p$ of responding slowly (exceeding a QoS threshold), the probability $P_{user}$ that the entire user request will be slow is given by:
+
+\begin{equation}
+P_{user} = 1 - (1 - p)^N
+\end{equation}
+
+If we assume that a single server has a P99 of 1 second (i.e., 1\% of requests are slow, $p=0.01$), and the user request depends on $N=100$ services:
+
+\begin{equation}
+P_{user} = 1 - (1 - 0.01)^{100} = 1 - (0.99)^{100} \approx 0.634
+\end{equation}
+
+The result is counterintuitive but alarming: even if every single subsystem performs well 99\% of the time, 63.4\% of user requests will experience high latency. In hyperscale systems where $N$ can reach thousands, “queuing” becomes a greater problem that what may be considered acceptable.
+
+\subsection{Causes of the Spikes}
+There are many causes for these latency spikes, which are often unrelated to the instantaneous workload \cite{tail}:
+\begin{itemize}
+    \item \textbf{Shared Resources:} Contention for CPU, cache, or memory bandwidth in virtualized or containerized environments.
+    \item \textbf{Power Management:} CPU state transitions (C-states) for power saving that introduce wake-up latencies.
+    \item \textbf{System Maintenance:} Background processes, updates, or memory compaction.
+    \item \textbf{Garbage Collection (GC):} In managed languages (Java, Go, Python), “stop-the-world” pauses for memory reclamation are a primary cause of jitter, blocking application execution for tens or hundreds of milliseconds.
+\end{itemize}
+
+\subsection{Economic Impact}
+The impact of latency is not purely technical, but directly economic. Studies conducted by Amazon have shown that every 100ms of additional latency costs 1\% of total sales \cite{linden2006}. Google has found that a 0.5-second delay in generating a search page reduces traffic by 20\% \cite{linden2006}. In Real-Time Bidding (RTB) systems for online advertising, there is a “hard timeout” (often 100ms): if a response does not arrive within this threshold, the revenue opportunity is lost forever. Therefore, mitigating Tail Latency is a critical business requirement.
+
+\section{Mitigation Strategies:Hedged Requests}
+
+To address the problem of variability, the industry has developed several techniques. While the traditional approach focuses on optimizing code to reduce variance (often an impossible task in shared cloud environments), Dean and Barroso propose accepting variance as a fact of life and mitigating it through redundancy.
+
+The most promising technique is \textbf{Request Hedging}. The idea is inspired by the financial concept of hedging: instead of betting on a single asset, you diversify.
+
+In the context of microservices, the client sends a request to a server. If it does not receive a response within a predefined time interval $T_{hedge}$ (usually set to the 95th percentile of expected latency), the client sends a second identical request (“Hedge Request”) to a different instance of the service. The client uses the first response that arrives (whether from the original or the hedge) and discards the other.
+
+\subsection{Effectiveness}
+The effectiveness of hedging lies in conditional probability. If the probability that a request is slow is $p$, the probability that two independent requests sent to different servers are both slow is $p^2$.
+With $p=0.01$ (1\%), the probability of failure with hedging drops to $0.0001$ (0.01\%). In practical terms, this transforms a system that is slow once every hundred requests into a system that is slow once every ten thousand. This approach can be even layered, thus reducing the probability to almost 0\%.
+
+\section{Limitations of the Application Approach (User Space)}
+
+Hedged requests have become the staple now for parallelized tasks, but, traditionally, this logic is implemented in \textbf{User Space} (application level).  
+
+Implementing hedging requires modifying the code of every RPC client. In a multilingual microservices ecosystem, this means writing and maintaining complex timeout, retry, and cancellation logic in Java, Python, Go, Node.js, C++, etc. Each library must be updated, tested, and deployed, creating enormous technical debt and consistency issues.
+
+\subsection{The Problem of Jitter in User Space}
+One of the most serious limitations, however, is performance-related. An application running in User Space has no deterministic control over its execution time.
+\begin{itemize}
+    \item \textbf{Garbage Collection:} If the Python or Java runtime starts a Garbage Collection just as the $T_{hedge}$ timer expires, the rescue request will be delayed until the GC is complete. This adds latency just when the system is trying to reduce it.
+    \item \textbf{Process Scheduling:} In a multitasking operating system such as Linux, the scheduler (CFS) may preempt the application process to give CPU time to other processes. If the system is busy, the “wake-up” of the application to send the hedge may occur with a significant delay (Jitter).
+\end{itemize}
+
+These factors make application hedging inaccurate. As we will demonstrate in the experimental results of this thesis, an application client, however optimized, will always show variance in maximum latency due to these intrinsic phenomena of user space.
+
+
+\section{eBPF: The New Frontier}
+
+To overcome user space limitations, control logic must be moved closer to the hardware: into the operating system kernel. Until a few years ago, this required writing kernel modules (LKMs), a complex task. Today, \textbf{eBPF (Extended Berkeley Packet Filter)} technology offers a secure and efficient solution \cite{SentinelOne2023eBPF}.
+
+eBPF allows programs to be loaded into a virtual machine within the Linux kernel. These programs are statically verified to ensure security (they cannot crash the system or access invalid memory) and compiled Just-In-Time (JIT) into native machine code for maximum performance. eBPF allows programming "in the kernel" dynamically, intercepting network packets, system calls, and tracepoints.
+
+Using eBPF, it's possible to implement Request Hedging as a transparent network feature, invisible to the application. The kernel itself takes care of monitoring response times and injecting rescue packets.
+
+\section{Thesis Objectives}
+
+The primary objective of this thesis is to design, implement, and validate a Transparent Request Hedging system based on eBPF.
+Specifically, the thesis aims to:
+\begin{enumerate}
+    \item Analyze the technical feasibility of using eBPF (specifically the Traffic Control - TC hook) to clone and re-inject UDP packets.
+    \item Solve low-level challenges related to the Linux networking stack, such as managing \textit{Checksum Offloading} and routing locally generated packets (\textit{Martian Packets}).
+    \item Quantitatively compare, through a deterministic test environment (“Deterministic Chaos”), the performance of a kernel-level hedger versus an application-level hedger.
+    \item Demonstrate that the kernel-level approach offers superior stability (less jitter) by eliminating user space interference.
+\end{enumerate}
+
+\end{document}
