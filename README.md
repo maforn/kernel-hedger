@@ -5,7 +5,7 @@
 ![Language](https://img.shields.io/badge/language-C%20%7C%20Python-blue)
 
 ## Abstract
-This repository contains the source code and benchmarking suite for my Collegio Superiore's [Short Thesis](thesis/Thesis.pdf): **"Kernel-level Hedged Requests via eBPF"**
+This repository contains the source code and benchmarking suite for my Collegio Superiore's final [Thesis](thesis/Thesis.pdf): **"Kernel-level Hedged Requests via eBPF"**
 
 This project demonstrates how moving reliability logic (Request Hedging) from User Space (Application) to Kernel Space (eBPF) eliminates **User Space Jitter** (caused by Garbage Collection and Process Scheduling), resulting in a 96% reduction in P99 latency.
 
